@@ -1,41 +1,41 @@
+//npm i elliptic
+//npm install ws
+
 // Get the sha256 hash function.
 const crypto = require("crypto"), SHA256 = message => crypto.createHash("sha256").update(message).digest("hex");
 const EC = require("elliptic").ec, ec = new EC("secp256k1");
 
-const MINT_KEY_PAIR = ec.genKeyPair();
+const MINT_PRIVATE_ADDRESS = "0700a1ad28a20e5b2a517c00242d3e25a88d84bf54dce9e1733e6096e6d6495e";
+const MINT_KEY_PAIR = ec.keyFromPrivate(MINT_PRIVATE_ADDRESS, "hex");
 const MINT_PUBLIC_ADDRESS = MINT_KEY_PAIR.getPublic("hex");
 
 const holderKeyPair = ec.genKeyPair();
 
 class Block {
-    constructor(timestamp = "", data = []) {
+    constructor(timestamp = Date.now().toString(), data = []) {
         this.timestamp = timestamp;
         this.data = data;
-        this.hash = this.getHash();
-        this.prevHash = ""; // previous block's hash
+        this.prevHash = "";
+        this.hash = Block.getHash(this);
         this.nonce = 0;
     }
 
     // Our hash function.
-    getHash() {
-        return SHA256(this.prevHash + this.timestamp + JSON.stringify(this.data) + this.nonce);
+    static getHash(block) {
+        return SHA256(block.prevHash + block.timestamp + JSON.stringify(block.data) + block.nonce);
     }
 
     mine(difficulty) {
-        // Basically, it loops until our hash starts with 
-        // the string 0...000 with length of <difficulty>.
         while (!this.hash.startsWith(Array(difficulty + 1).join("0"))) {
-            // We increases our nonce so that we can get a whole different hash.
             this.nonce++;
-            // Update our new hash with the new nonce value.
-            this.hash = this.getHash();
+            this.hash = Block.getHash(this);
         }
     }
 
-    hasValidTransactions(chain) {
+    static hasValidTransactions(block, chain) {
         let gas = 0, reward = 0;
 
-        this.data.forEach(transaction => {
+        block.data.forEach(transaction => {
             if (transaction.from !== MINT_PUBLIC_ADDRESS) {
                 gas += transaction.gas;
             } else {
@@ -45,8 +45,8 @@ class Block {
 
         return (
             reward - gas === chain.reward &&
-            this.data.every(transaction => transaction.isValid(transaction, chain)) && 
-            this.data.filter(transaction => transaction.from === MINT_PUBLIC_ADDRESS).length === 1
+            block.data.every(transaction => Transaction.isValid(transaction, chain)) && 
+            block.data.filter(transaction => transaction.from === MINT_PUBLIC_ADDRESS).length === 1
         );
     }
 }
@@ -54,7 +54,7 @@ class Block {
 class Blockchain {
     constructor() {
         // Create our genesis block
-        const initalCoinRelease = new Transaction(MINT_PUBLIC_ADDRESS, holderKeyPair.getPublic("hex"), 100000);
+        const initalCoinRelease = new Transaction(MINT_PUBLIC_ADDRESS,"04719af634ece3e9bf00bfd7c58163b2caf2b8acd1a437a3e99a093c8dd7b1485c20d8a4c9f6621557f1d583e0fcff99f3234dd1bb365596d1d67909c270c16d64", 100000000);
         this.chain = [new Block(Date.now().toString(), [initalCoinRelease])];        this.difficulty = 1;
         this.transactions = [];
         this.reward = 297;
@@ -65,28 +65,23 @@ class Blockchain {
     }
 
     addBlock(block) {
-        // Since we are adding a new block, prevHash will be the hash of the old latest block
         block.prevHash = this.getLastBlock().hash;
-        // Since now prevHash has a value, we must reset the block's hash
-        block.hash = block.getHash();
-
+        block.hash = Block.getHash(block);
         block.mine(this.difficulty);
-
-        // Object.freeze ensures immutability in our code
         this.chain.push(Object.freeze(block));
+
+        this.difficulty += Date.now() - parseInt(this.getLastBlock().timestamp) < this.blockTime ? 1 : -1;
     }
 
-    isValid(blockchain = this) {
-        // Iterate over the chain, we need to set i to 1 because there are nothing before the genesis block, so we start at the second block.
+    static isValid(blockchain) {
         for (let i = 1; i < blockchain.chain.length; i++) {
             const currentBlock = blockchain.chain[i];
             const prevBlock = blockchain.chain[i-1];
 
-            // Check validation
             if (
-                currentBlock.hash !== currentBlock.getHash() || 
+                currentBlock.hash !== Block.getHash(currentBlock) || 
                 prevBlock.hash !== currentBlock.prevHash || 
-                !currentBlock.hasValidTransactions(blockchain)
+                !Block.hasValidTransactions(currentBlock, blockchain)
             ) {
                 return false;
             }
@@ -96,7 +91,7 @@ class Blockchain {
     }
 
     addTransaction(transaction) {
-        if (transaction.isValid(transaction, this)) {
+        if (Transaction.isValid(transaction, this)) {
             this.transactions.push(transaction);
         }
     }
@@ -153,15 +148,14 @@ class Transaction {
         }
     }
 
-    isValid(tx, chain) {
-        return (
-            tx.from &&
-            tx.to &&
-            tx.amount &&
-            // Add gas
-            (chain.getBalance(tx.from) >= tx.amount + tx.gas || tx.from === MINT_PUBLIC_ADDRESS) &&
+    static isValid(tx, chain) {
+        return ( 
+            tx.from && 
+            tx.to && 
+            tx.amount && 
+            (chain.getBalance(tx.from) >= tx.amount + tx.gas || tx.from === MINT_PUBLIC_ADDRESS) && 
             ec.keyFromPublic(tx.from, "hex").verify(SHA256(tx.from + tx.to + tx.amount + tx.gas), tx.signature)
-        );
+        )
     }
 }
 
