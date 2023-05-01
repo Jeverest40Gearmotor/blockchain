@@ -1,15 +1,10 @@
-//npm i elliptic
-//npm install ws
+"use strict";
 
-// Get the sha256 hash function.
 const crypto = require("crypto"), SHA256 = message => crypto.createHash("sha256").update(message).digest("hex");
 const EC = require("elliptic").ec, ec = new EC("secp256k1");
-
 const MINT_PRIVATE_ADDRESS = "0700a1ad28a20e5b2a517c00242d3e25a88d84bf54dce9e1733e6096e6d6495e";
 const MINT_KEY_PAIR = ec.keyFromPrivate(MINT_PRIVATE_ADDRESS, "hex");
 const MINT_PUBLIC_ADDRESS = MINT_KEY_PAIR.getPublic("hex");
-
-const holderKeyPair = ec.genKeyPair();
 
 class Block {
     constructor(timestamp = Date.now().toString(), data = []) {
@@ -20,7 +15,6 @@ class Block {
         this.nonce = 0;
     }
 
-    // Our hash function.
     static getHash(block) {
         return SHA256(block.prevHash + block.timestamp + JSON.stringify(block.data) + block.nonce);
     }
@@ -53,13 +47,14 @@ class Block {
 
 class Blockchain {
     constructor() {
-        // Create our genesis block
-        const initalCoinRelease = new Transaction(MINT_PUBLIC_ADDRESS,"04719af634ece3e9bf00bfd7c58163b2caf2b8acd1a437a3e99a093c8dd7b1485c20d8a4c9f6621557f1d583e0fcff99f3234dd1bb365596d1d67909c270c16d64", 100000000);
-        this.chain = [new Block(Date.now().toString(), [initalCoinRelease])];        this.difficulty = 1;
+        const initalCoinRelease = new Transaction(MINT_PUBLIC_ADDRESS, "04719af634ece3e9bf00bfd7c58163b2caf2b8acd1a437a3e99a093c8dd7b1485c20d8a4c9f6621557f1d583e0fcff99f3234dd1bb365596d1d67909c270c16d64", 100000000);
         this.transactions = [];
+        this.chain = [new Block("", [initalCoinRelease])];
+        this.difficulty = 1;
+        this.blockTime = 30000;
         this.reward = 297;
     }
-    
+
     getLastBlock() {
         return this.chain[this.chain.length - 1];
     }
@@ -71,23 +66,6 @@ class Blockchain {
         this.chain.push(Object.freeze(block));
 
         this.difficulty += Date.now() - parseInt(this.getLastBlock().timestamp) < this.blockTime ? 1 : -1;
-    }
-
-    static isValid(blockchain) {
-        for (let i = 1; i < blockchain.chain.length; i++) {
-            const currentBlock = blockchain.chain[i];
-            const prevBlock = blockchain.chain[i-1];
-
-            if (
-                currentBlock.hash !== Block.getHash(currentBlock) || 
-                prevBlock.hash !== currentBlock.prevHash || 
-                !Block.hasValidTransactions(currentBlock, blockchain)
-            ) {
-                return false;
-            }
-        }
-
-        return true;
     }
 
     addTransaction(transaction) {
@@ -106,10 +84,11 @@ class Blockchain {
         const rewardTransaction = new Transaction(MINT_PUBLIC_ADDRESS, rewardAddress, this.reward + gas);
         rewardTransaction.sign(MINT_KEY_PAIR);
 
-        // Prevent people from minting coins and mine the minting transaction.
-        if (this.transactions.length !== 0) this.addBlock(new Block(Date.now().toString(), [rewardTransaction, ...this.transactions]));
+        const blockTransactions = [rewardTransaction, ...this.transactions];
 
-        this.transactions = [];
+        if (this.transactions.length !== 0) this.addBlock(new Block(Date.now().toString(), blockTransactions));
+
+        this.transactions.splice(0, blockTransactions.length - 1);
     }
 
     getBalance(address) {
@@ -119,36 +98,51 @@ class Blockchain {
             block.data.forEach(transaction => {
                 if (transaction.from === address) {
                     balance -= transaction.amount;
-                    balance -= transaction.gas
+                    balance -= transaction.gas;
                 }
 
                 if (transaction.to === address) {
                     balance += transaction.amount;
                 }
             })
-        });
+        })
 
         return balance;
     }
+
+    static isValid(blockchain) {
+        for (let i = 1; i < blockchain.chain.length; i++) {
+            const currentBlock = blockchain.chain[i];
+            const prevBlock = blockchain.chain[i-1];
+
+            if (
+                currentBlock.hash !== Block.getHash(currentBlock) || 
+                prevBlock.hash !== currentBlock.prevHash || 
+                !Block.hasValidTransactions(currentBlock, blockchain)
+            ) {
+                return false;
+            }
+        }
+
+        return true;
+    }
 }
 
-class Transaction {
-    // Gas will be set to 0 because we are making it optional
-    constructor(from, to, amount, gas = 0) {
-        this.from = from;
-        this.to = to;
-        this.amount = amount;
-        this.gas = gas;
-    }
-
-    sign(keyPair) {
-        if (keyPair.getPublic("hex") === this.from) {
-            // Add gas
-            this.signature = keyPair.sign(SHA256(this.from + this.to + this.amount + this.gas), "base64").toDER("hex");
-        }
-    }
-
-    static isValid(tx, chain) {
+class Transaction { 
+    constructor(from, to, amount, gas = 0) { 
+        this.from = from; 
+        this.to = to; 
+        this.amount = amount; 
+        this.gas = gas; 
+    } 
+ 
+    sign(keyPair) { 
+        if (keyPair.getPublic("hex") === this.from) { 
+            this.signature = keyPair.sign(SHA256(this.from + this.to + this.amount + this.gas), "base64").toDER("hex"); 
+        } 
+    } 
+ 
+    static isValid(tx, chain) { 
         return ( 
             tx.from && 
             tx.to && 
@@ -157,25 +151,8 @@ class Transaction {
             ec.keyFromPublic(tx.from, "hex").verify(SHA256(tx.from + tx.to + tx.amount + tx.gas), tx.signature)
         )
     }
-}
+} 
 
-module.exports = {Block, Blockchain, Transaction};
+const JeChain = new Blockchain();
 
-const JzChain = new Blockchain();
-
-// Your original balance is 100000
-
-const girlfriendWallet = ec.genKeyPair();
-
-// Create a transaction
-const transaction = new Transaction(holderKeyPair.getPublic("hex"), girlfriendWallet.getPublic("hex"), 100, 10);
-// Sign the transaction
-transaction.sign(holderKeyPair);
-// Add transaction to pool
-JzChain.addTransaction(transaction);
-// Mine transaction
-JzChain.mineTransactions(holderKeyPair.getPublic("hex"));
-
-// Prints out balance of both address
-console.log("Your balance:", JzChain.getBalance(holderKeyPair.getPublic("hex")));
-console.log("Your girlfriend's balance:", JzChain.getBalance(girlfriendWallet.getPublic("hex")));
+module.exports = { Block, Transaction, Blockchain, JeChain };
